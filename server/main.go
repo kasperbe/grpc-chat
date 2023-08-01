@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"time"
 
 	"context"
 	"net"
@@ -20,6 +21,17 @@ func (s *server) Send(ctx context.Context, in *pb.ChatMessage) (*pb.ChatResponse
 		Status:  200,
 		Message: "test",
 	}, nil
+}
+
+func (s *server) Listen(in *pb.Subscribe, stream pb.Chat_ListenServer) error {
+	for {
+		time.Sleep(1 * time.Second)
+
+		stream.Send(&pb.ChatMessage{
+			MessageId: "123",
+			Message:   "Streaming",
+		})
+	}
 }
 
 func main() {

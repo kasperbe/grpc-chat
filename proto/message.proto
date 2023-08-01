@@ -4,7 +4,10 @@ option go_package = "server/proto";
 
 service Chat {
   rpc Send(ChatMessage) returns (ChatResponse) {}
+  rpc Listen(Subscribe) returns (stream ChatMessage) {}
 }
+
+message Subscribe { string user_id = 1; }
 
 message ChatMessage {
   string message_id = 1;
