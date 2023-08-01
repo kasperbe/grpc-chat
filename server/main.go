@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"log"
+	"sync"
 	"time"
 
 	"context"
@@ -12,15 +14,63 @@ import (
 	"google.golang.org/grpc/reflection"
 )
 
-func NewServer() *Server {
+func NewServer(storage *ConnectionStorage) *Server {
 	return &Server{
-		Connections: map[string]chan *pb.ChatMessage{},
+		connections: storage,
+	}
+}
+
+type ConnectionStorage struct {
+	connections map[string]chan *pb.ChatMessage
+	mutex       sync.RWMutex
+}
+
+func (cs *ConnectionStorage) Connect(userID string) chan *pb.ChatMessage {
+	cs.mutex.Lock()
+	defer cs.mutex.Unlock()
+
+	if c, ok := cs.connections[userID]; ok {
+		return c
+	}
+
+	ch := make(chan *pb.ChatMessage, 15)
+	cs.connections[userID] = ch
+
+	return ch
+}
+
+func (cs *ConnectionStorage) Get(userID string) (chan *pb.ChatMessage, error) {
+	cs.mutex.RLock()
+	defer cs.mutex.RUnlock()
+	if c, ok := cs.connections[userID]; ok {
+		return c, nil
+	}
+
+	return nil, errors.New("user_offile")
+}
+
+func (cs *ConnectionStorage) Send(msg *pb.ChatMessage) error {
+
+	ch, err := cs.Get(msg.UserId)
+	if err != nil {
+		return err
+	}
+
+	ch <- msg
+
+	return nil
+}
+
+func NewStorage() *ConnectionStorage {
+	return &ConnectionStorage{
+		connections: map[string]chan *pb.ChatMessage{},
+		mutex:       sync.RWMutex{},
 	}
 }
 
 type Server struct {
 	pb.UnimplementedChatServer
-	Connections map[string]chan *pb.ChatMessage
+	connections *ConnectionStorage
 }
 
 func (s *Server) Send(ctx context.Context, in *pb.ChatMessage) (*pb.ChatResponse, error) {
@@ -30,18 +80,13 @@ func (s *Server) Send(ctx context.Context, in *pb.ChatMessage) (*pb.ChatResponse
 		MessageId: "123",
 	}
 
-	if c, ok := s.Connections[in.UserId]; ok {
-		c <- msg
-
+	err := s.connections.Send(msg)
+	if err != nil {
 		return &pb.ChatResponse{
-			Status:  200,
-			Message: "message_sent",
+			Status:  400,
+			Message: "user_offline",
 		}, nil
 	}
-
-	c := make(chan *pb.ChatMessage, 15)
-	s.Connections[in.UserId] = c
-	c <- msg
 
 	return &pb.ChatResponse{
 		Status:  200,
@@ -51,14 +96,7 @@ func (s *Server) Send(ctx context.Context, in *pb.ChatMessage) (*pb.ChatResponse
 
 func (s *Server) Listen(in *pb.Subscribe, stream pb.Chat_ListenServer) error {
 
-	var ch chan *pb.ChatMessage
-
-	if c, ok := s.Connections[in.UserId]; ok {
-		ch = c
-	} else {
-		ch = make(chan *pb.ChatMessage, 15)
-		s.Connections[in.UserId] = ch // Guard this with some mutex
-	}
+	ch := s.connections.Connect(in.UserId)
 
 	for msg := range ch {
 		stream.Send(&pb.ChatMessage{
@@ -84,8 +122,10 @@ func main() {
 		log.Fatalf("failed to listen: %v", err)
 	}
 
+	store := NewStorage()
+
 	s := grpc.NewServer()
-	pb.RegisterChatServer(s, NewServer())
+	pb.RegisterChatServer(s, NewServer(store))
 	reflection.Register(s)
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("serve: %v", err)
