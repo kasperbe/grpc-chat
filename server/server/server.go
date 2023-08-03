@@ -5,7 +5,6 @@ import (
 	"github.com/kasperbe/go-chat/server/chat"
 	pb "github.com/kasperbe/go-chat/server/proto"
 	"github.com/kasperbe/go-chat/server/storage"
-	"time"
 )
 
 func NewServer(storage *storage.ConnectionStorage) *Server {
@@ -52,12 +51,5 @@ func (s *Server) Listen(in *pb.Subscribe, stream pb.Chat_ListenServer) error {
 		})
 	}
 
-	for {
-		time.Sleep(1 * time.Second)
-
-		stream.Send(&pb.ChatMessage{
-			MessageId: "123",
-			Message:   "Streaming",
-		})
-	}
+	return nil
 }
